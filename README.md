@@ -1,1 +1,180 @@
 # terraform-count-vs-for-each
+
+Count
+In the past (before Terraform 0.12.6) the only way to create multiple instances of the same resource was to use a count parameter.
+Quite often there was some list defined somewhere and we’d create so many instances of a resource as many elements the list has, a sample code would look like this in such case:
+
+variable "my_list" {
+  default = ["first", "second", "third"]
+}
+resource "null_resource" "default" {
+  count = length(var.my_list)
+  triggers = {
+    list_index = count.index
+    list_value = var.my_list[count.index]
+  }
+}
+So to recap shortly, above code will create 3 instances of “null_resource”, each of which will have 2 triggers defined, one a “list_index” and second “a list_value”. Plan looks like that:
+
+Terraform will perform the following actions:
+# null_resource.default[0] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "0"
+          + "list_value" = "first"
+        }
+    }
+# null_resource.default[1] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "1"
+          + "list_value" = "second"
+        }
+    }
+# null_resource.default[2] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "2"
+          + "list_value" = "third"
+        }
+    }
+Downside of count
+
+Now, count is sensible for any changes in list order, this means that if for some reason order of the list is changed, terraform will force replacement of all resources of which the index in the list has changed. In example below I added one more element to the list (as first element, at list index 0) and this is what terraform is trying to do as a result:
+
+variable "my_list" {
+  default = ["zero", "first", "second", "third"]
+}
+resource "null_resource" "default" {
+  count = length(var.my_list)
+  triggers = {
+    list_index = count.index
+    list_value = var.my_list[count.index]
+  }
+}
+-----------------------------------------------------------------
+Terraform will perform the following actions:
+# null_resource.default[0] must be replaced
+-/+ resource "null_resource" "default" {
+      ~ id       = "4074861383382414527" -> (known after apply)
+      ~ triggers = { # forces replacement
+            "list_index" = "0"
+          ~ "list_value" = "first" -> "zero"
+        }
+    }
+# null_resource.default[1] must be replaced
+-/+ resource "null_resource" "default" {
+      ~ id       = "8334793212909207903" -> (known after apply)
+      ~ triggers = { # forces replacement
+            "list_index" = "1"
+          ~ "list_value" = "second" -> "first"
+        }
+    }
+# null_resource.default[2] must be replaced
+-/+ resource "null_resource" "default" {
+      ~ id       = "7757933237077069274" -> (known after apply)
+      ~ triggers = { # forces replacement
+            "list_index" = "2"
+          ~ "list_value" = "third" -> "second"
+        }
+    }
+# null_resource.default[3] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "3"
+          + "list_value" = "third"
+        }
+    }
+Not only my new resource is getting added, but ALL the other resources are being recreated, this is a DISASTER.
+If this would get applied in live environment on a real resources it would lead to downtime… very uncool :(
+
+for_each — to the rescue!
+for_each was introduced in terraform 0.12.6 and it basically allows us to do the same as count, so to create multiple instances of the same resource… with one small but very important difference. It takes a map / set as input and uses the key of a map as an index of instances of created resource.
+Ok, now you think: “ but my input / initial variable is a list and it doesn’t make sense / is complicated to convert it into a map” — don’t worry terraform can convert a type with help of toset function. In example below, I still have my initial variable defined as a list (as in real life it can be used by multiple resources in multiple places so we want to keep it as is). I replace count with for_each with toset function and apply on empty state:
+
+variable "my_list" {
+  default = ["zero", "first", "second", "third"]
+}
+resource "null_resource" "default" {
+  for_each = toset(var.my_list)
+  triggers = {
+    list_index = each.key
+    list_value = each.value
+  }
+}
+You can also see, that I don’t use “var.my_list[count.index]” and just “count.index” but rather “each.key” and “each.value”, this is because for_each exposes it’s “current” key/value in such way.
+My plan looks like this:
+
+Terraform will perform the following actions:
+# null_resource.default["first"] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "first"
+          + "list_value" = "first"
+        }
+    }
+# null_resource.default["second"] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "second"
+          + "list_value" = "second"
+        }
+    }
+# null_resource.default["third"] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "third"
+          + "list_value" = "third"
+        }
+    }
+# null_resource.default["zero"] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "zero"
+          + "list_value" = "zero"
+        }
+    }
+Note 3 things:
+1. Index of null_resource.default isn’t a list item index anymore, it’s actual list item value.
+2. Another thing to notice is that “list_index” and “list_value” are equal. This is because we use a converted list as input, if input would be a real map then “each.key” and “each.value” would have actual map values.
+3. Instances of my resource are unordered (and this what we want!).
+
+So, what happens if:
+1. We will change order of the input list “my_list”: Well… nothing, terraform plan and apply will show no changes
+2. We will add a new element to our input list, at any (random) index? Only new instance of a resource will be created without any modification to the others. In example below I added a new element at the beginning of the list:
+
+variable "my_list" {
+  default = ["minus_one", "zero", "first", "second", "third"]
+}
+resource "null_resource" "default" {
+  for_each = toset(var.my_list)
+  triggers = {
+    list_index = each.key
+    list_value = each.value
+  }
+}
+-------------------------------------------------------------------
+terraform plan:
+Terraform will perform the following actions:
+# null_resource.default["minus_one"] will be created
+  + resource "null_resource" "default" {
+      + id       = (known after apply)
+      + triggers = {
+          + "list_index" = "minus_one"
+          + "list_value" = "minus_one"
+        }
+    }
+Plan: 1 to add, 0 to change, 0 to destroy.
+The verdict
+for_each helps to avoid accidental / unwanted recreation of resource instances when a input list (or just it’s order) has been modified.
+I have converted most of my states from count to for_each and I would advice the same to you.
+
+NOTE: Converting already existing states from count to for_each WITHOUT any recreation of resources can be tricky. 
