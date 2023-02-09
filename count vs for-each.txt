@@ -1,6 +1,7 @@
 Count
 In the past (before Terraform 0.12.6) the only way to create multiple instances of the same resource was to use a count parameter.
-Quite often there was some list defined somewhere and we’d create so many instances of a resource as many elements the list has, a sample code would look like this in such case:
+Quite often there was some list defined somewhere and we’d create so many instances of a resource as many elements the list has,
+a sample code would look like this in such case:
 
 variable "my_list" {
   default = ["first", "second", "third"]
@@ -12,7 +13,10 @@ resource "null_resource" "default" {
     list_value = var.my_list[count.index]
   }
 }
-So to recap shortly, above code will create 3 instances of “null_resource”, each of which will have 2 triggers defined, one a “list_index” and second “a list_value”. Plan looks like that:
+
+
+So to recap shortly, above code will create 3 instances of “null_resource”, 
+each of which will have 2 triggers defined, one a “list_index” and second “a list_value”. Plan looks like that:
 
 Terraform will perform the following actions:
 # null_resource.default[0] will be created
@@ -41,7 +45,9 @@ Terraform will perform the following actions:
     }
 Downside of count
 
-Now, count is sensible for any changes in list order, this means that if for some reason order of the list is changed, terraform will force replacement of all resources of which the index in the list has changed. In example below I added one more element to the list (as first element, at list index 0) and this is what terraform is trying to do as a result:
+Now, count is sensible for any changes in list order, this means that if for some reason order of the list is changed, 
+terraform will force replacement of all resources of which the index in the list has changed. 
+In example below I added one more element to the list (as first element, at list index 0) and this is what terraform is trying to do as a result:
 
 variable "my_list" {
   default = ["zero", "first", "second", "third"]
@@ -91,8 +97,11 @@ Not only my new resource is getting added, but ALL the other resources are being
 If this would get applied in live environment on a real resources it would lead to downtime… very uncool :(
 
 for_each — to the rescue!
-for_each was introduced in terraform 0.12.6 and it basically allows us to do the same as count, so to create multiple instances of the same resource… with one small but very important difference. It takes a map / set as input and uses the key of a map as an index of instances of created resource.
-Ok, now you think: “ but my input / initial variable is a list and it doesn’t make sense / is complicated to convert it into a map” — don’t worry terraform can convert a type with help of toset function. In example below, I still have my initial variable defined as a list (as in real life it can be used by multiple resources in multiple places so we want to keep it as is). I replace count with for_each with toset function and apply on empty state:
+for_each was introduced in terraform 0.12.6 and it basically allows us to do the same as count, so to create multiple instances 
+of the same resource… with one small but very important difference. It takes a map / set as input and uses the key of a map as an index of instances of created resource.
+Ok, now you think: “ but my input / initial variable is a list and it doesn’t make sense / is complicated to convert it into a map” — don’t worry 
+terraform can convert a type with help of toset function. In example below, I still have my initial variable defined as a list (as in real life 
+it can be used by multiple resources in multiple places so we want to keep it as is). I replace count with for_each with toset function and apply on empty state:
 
 variable "my_list" {
   default = ["zero", "first", "second", "third"]
